@@ -2581,16 +2581,24 @@ button{width:100%;padding:10px;border-radius:10px;border:none;background:rgba(12
   transition:all .15s}
 button:hover{background:rgba(124,185,255,.25)}
 .err{color:#e94560;font-size:12px;margin-top:10px;display:none}
+.toggle-link{color:#7cb9ff;font-size:12px;margin-top:14px;display:inline-block;cursor:pointer;
+  text-decoration:none;border:none;background:none;padding:0}
+.toggle-link:hover{text-decoration:underline}
 </style></head><body>
 <div class="card">
   <div class="logo">{{BOT_NAME_INITIAL}}</div>
-  <h1>{{BOT_NAME}}</h1>
+  <h1>Bienvenido</h1>
   <p class="sub">{{LOGIN_SUBTITLE}}</p>
   <form id="login-form" data-invalid-pw="{{LOGIN_INVALID_PW}}" data-conn-failed="{{LOGIN_CONN_FAILED}}">
-    <input type="password" id="pw" placeholder="{{LOGIN_PLACEHOLDER}}" autofocus>
-    <button type="submit">{{LOGIN_BTN}}</button>
+    <input type="email" id="email" placeholder="Correo electrónico" autofocus>
+    <div id="username-field" style="display:none">
+      <input type="text" id="username" placeholder="Nombre de usuario">
+    </div>
+    <input type="password" id="pw" placeholder="{{LOGIN_PLACEHOLDER}}">
+    <button type="submit" id="submit-btn">{{LOGIN_BTN}}</button>
   </form>
   <div class="err" id="err"></div>
+  <a href="#" id="toggle-mode" class="toggle-link">Crear cuenta</a>
 </div>
 <!-- Keep login.js relative so subpath mounts load it under the current scope. -->
 <script src="static/login.js?v={{WEBUI_VERSION}}"></script>
@@ -6111,6 +6119,7 @@ def handle_post(handler, parsed) -> bool:
             is_auth_enabled,
         )
         from api.auth import _check_login_rate, _record_login_attempt
+        from api.users import verify_user
 
         if not is_auth_enabled():
             return j(handler, {"ok": True, "message": "Auth not enabled"})
@@ -6121,18 +6130,38 @@ def handle_post(handler, parsed) -> bool:
                 {"error": "Too many attempts. Try again in a minute."},
                 status=429,
             )
+        # Multi-user login: check email + password first, fallback to shared password
+        email = body.get("email", "")
         password = body.get("password", "")
-        if not verify_password(password):
-            _record_login_attempt(client_ip)
-            return bad(handler, "Invalid password", 401)
+        authenticated = False
+        user_info = None
+
+        if email:
+            # Multi-user auth
+            user_info = verify_user(email, password)
+            if user_info:
+                authenticated = True
+            else:
+                _record_login_attempt(client_ip)
+                return bad(handler, "Credenciales inválidas", 401)
+        else:
+            # Fallback: shared password (original behavior)
+            if not verify_password(password):
+                _record_login_attempt(client_ip)
+                return bad(handler, "Invalid password", 401)
+            authenticated = True
+
         cookie_val = create_session()
         handler.send_response(200)
         handler.send_header("Content-Type", "application/json")
         handler.send_header("Cache-Control", "no-store")
         _security_headers(handler)
         set_auth_cookie(handler, cookie_val)
+        response_data = {"ok": True}
+        if user_info:
+            response_data["user"] = user_info
         handler.end_headers()
-        handler.wfile.write(json.dumps({"ok": True}).encode())
+        handler.wfile.write(json.dumps(response_data).encode())
         return True
 
     if parsed.path == "/api/auth/logout":
@@ -6149,6 +6178,29 @@ def handle_post(handler, parsed) -> bool:
         handler.end_headers()
         handler.wfile.write(json.dumps({"ok": True}).encode())
         return True
+
+    if parsed.path == "/api/auth/register":
+        from api.users import create_user, user_exists
+
+        email = body.get("email", "").strip()
+        username = body.get("username", "").strip()
+        password = body.get("password", "")
+        if not email or not username or not password:
+            return bad(handler, "Todos los campos son requeridos", 400)
+        if len(password) < 6:
+            return bad(handler, "La contraseña debe tener al menos 6 caracteres", 400)
+        try:
+            user = create_user(email, username, password)
+            return j(handler, {"ok": True, "user": user})
+        except ValueError as e:
+            return bad(handler, str(e), 409)
+
+    if parsed.path == "/api/auth/users":
+        from api.users import get_users
+        users = get_users()
+        # Don't expose password hashes
+        safe_users = {e: {"username": u["username"], "role": u.get("role", "user"), "created_at": u.get("created_at", "")} for e, u in users.items()}
+        return j(handler, {"users": safe_users})
 
     # ── Checkpoints / Rollback (POST) ──
     if parsed.path == "/api/rollback/restore":
