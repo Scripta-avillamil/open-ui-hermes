@@ -1,0 +1,21 @@
+services:
+  openclaw-chat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openclaw-chat
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - OPENCLAW_GATEWAY_URL=${OPENCLAW_GATEWAY_URL:-http://host.docker.internal:18789}
+      - OPENCLAW_API_KEY=${OPENCLAW_API_KEY:-your-bearer-token}
+      - OPENCLAW_MODEL=${OPENCLAW_MODEL:-openclaw}
+      - JWT_SECRET=${JWT_SECRET:-change-this-to-a-random-secret}
+      - DATABASE_URL=file:/app/data/chat.db
+      - NODE_ENV=production
+    volumes:
+      - chat-data:/app/data
+
+volumes:
+  chat-data:
