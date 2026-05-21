@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Message, ChatMessage } from "@/types";
-import { useStreaming } from "./useStreaming";
+import { Message } from "@/types";
 import { useConversations } from "./useConversations";
 
 export function useChat() {
@@ -11,9 +10,8 @@ export function useChat() {
   >(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const { streamingContent, isStreaming, startStreaming, stopStreaming } =
-    useStreaming();
   const {
     conversations,
     loading: conversationsLoading,
@@ -25,62 +23,69 @@ export function useChat() {
   const sendMessage = useCallback(
     async (content: string) => {
       setError(null);
+      setIsLoading(true);
 
       try {
         let convId = activeConversationId;
-        if (!convId) {
-          const conv = await createConversation(
-            content.substring(0, 50).trim() || "Nueva conversación"
-          );
-          if (!conv) {
-            setError("Error al crear la conversación");
-            return;
-          }
-          convId = conv.id;
-          setActiveConversationId(convId);
-        }
 
         const userMessage: Message = {
           id: `temp-${Date.now()}`,
           role: "user",
           content,
-          conversationId: convId,
+          conversationId: convId || "pending",
           createdAt: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, userMessage]);
 
-        const chatMessages: ChatMessage[] = [...messages, userMessage].map(
-          (m) => ({
-            role: m.role as "user" | "assistant" | "system",
-            content: m.content,
-          })
-        );
+        // Show a loading indicator for the assistant
+        const loadingMessage: Message = {
+          id: `temp-loading`,
+          role: "assistant",
+          content: "",
+          conversationId: convId || "pending",
+          createdAt: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, loadingMessage]);
 
-        const assistantContent = await startStreaming(chatMessages, convId);
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: content, conversationId: convId }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Error en la conexión");
+        }
+
+        const data = await response.json();
+
+        if (!convId) {
+          convId = data.conversationId;
+          setActiveConversationId(convId);
+        }
 
         const assistantMessage: Message = {
           id: `temp-${Date.now() + 1}`,
           role: "assistant",
-          content: assistantContent,
+          content: data.content,
           conversationId: convId,
           createdAt: new Date().toISOString(),
         };
-        setMessages((prev) => [...prev, assistantMessage]);
+        setMessages((prev) => [...prev.slice(0, -1), assistantMessage]);
 
         refreshConversations();
       } catch (err) {
+        // Remove loading message on error
+        setMessages((prev) => prev.slice(0, -1));
         const message =
           err instanceof Error ? err.message : "Error desconocido";
         setError(message);
+      } finally {
+        setIsLoading(false);
       }
     },
-    [
-      activeConversationId,
-      messages,
-      createConversation,
-      startStreaming,
-      refreshConversations,
-    ]
+    [activeConversationId, createConversation, refreshConversations]
   );
 
   const loadConversation = useCallback(async (id: string) => {
@@ -117,14 +122,15 @@ export function useChat() {
 
   return {
     messages,
-    streamingContent,
-    isStreaming,
+    isLoading,
+    isStreaming: isLoading,
+    streamingContent: "",
     error,
     conversations,
     conversationsLoading,
     activeConversationId,
     sendMessage,
-    stopStreaming,
+    stopStreaming: () => {},
     loadConversation,
     startNewChat,
     deleteConversation: handleDeleteConversation,
