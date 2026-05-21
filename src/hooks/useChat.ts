@@ -69,7 +69,7 @@ export function useChat() {
           id: `temp-${Date.now() + 1}`,
           role: "assistant",
           content: data.content,
-          conversationId: convId,
+          conversationId: convId || data.conversationId,
           createdAt: new Date().toISOString(),
         };
         setMessages((prev) => [...prev.slice(0, -1), assistantMessage]);
