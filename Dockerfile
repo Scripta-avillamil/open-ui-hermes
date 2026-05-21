@@ -32,10 +32,12 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/package.json ./package.json
-COPY entrypoint.sh /app/entrypoint.sh
 
-# Install tsx and setup permissions
-RUN apk add --no-cache npm && npm install -g tsx
+# Install tsx and seed dependencies
+RUN npm install -g tsx
+RUN npm install bcryptjs @prisma/client
+
+COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # Create data directory for SQLite

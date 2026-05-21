@@ -1,9 +1,9 @@
 #!/bin/sh
 set -e
 
-# Run database seed
+# Run database seed (don't crash if it fails)
 echo "Running database seed..."
-npx tsx scripts/seed.ts
+npx tsx scripts/seed.ts || echo "Seed failed or already seeded, continuing..."
 
 # Start the app
 echo "Starting server..."
